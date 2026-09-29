@@ -121,3 +121,32 @@ TEST(InventoryRiskManager, SequentialFillsUpdatePositionCorrectly) {
     risk_mgr.apply_fill(ticker, "ask", 2);
     ASSERT_EQ(risk_mgr.get_position(ticker), -1);
 }
+
+TEST(InventoryRiskManager, OneSidedQuotingAtMaxLongPosition) {
+    InventoryRiskManager risk_mgr;
+    std::string ticker = "KXLIMIT-LONG";
+    risk_mgr.set_position(ticker, 2); // At max position limit (+2)
+
+    OrderBook ob = OrderBook::from_prices(ticker, 45, 55);
+    Quote q = risk_mgr.compute_quote(ob);
+
+    ASSERT_TRUE(q.valid);
+    ASSERT_FALSE(q.quote_bid); // MUST NOT place buy order
+    ASSERT_TRUE(q.quote_ask);  // MUST place sell order to flatten inventory
+    ASSERT_EQ(q.ask_price, 52);
+}
+
+TEST(InventoryRiskManager, OneSidedQuotingAtMaxShortPosition) {
+    InventoryRiskManager risk_mgr;
+    std::string ticker = "KXLIMIT-SHORT";
+    risk_mgr.set_position(ticker, -2); // At max short limit (-2)
+
+    OrderBook ob = OrderBook::from_prices(ticker, 45, 55);
+    Quote q = risk_mgr.compute_quote(ob);
+
+    ASSERT_TRUE(q.valid);
+    ASSERT_TRUE(q.quote_bid);   // MUST place buy order to cover short
+    ASSERT_FALSE(q.quote_ask);  // MUST NOT place sell order
+    ASSERT_EQ(q.bid_price, 48);
+}
+

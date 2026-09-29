@@ -163,10 +163,12 @@ namespace kalshi_mm {
 
     struct Quote {
         std::string ticker;
-        int bid_price; // YES bid
-        int ask_price; // YES ask
-        int quantity;
-        bool valid;
+        int bid_price = 0; // YES bid
+        int ask_price = 0; // YES ask
+        int quantity = 1;
+        bool quote_bid = true;
+        bool quote_ask = true;
+        bool valid = false;
         std::string reason;
     };
 
@@ -213,6 +215,8 @@ namespace kalshi_mm {
             q.ticker = ob.ticker;
             q.quantity = 1;
             q.valid = false;
+            q.quote_bid = true;
+            q.quote_ask = true;
 
             if (!ob.is_valid()) {
                 q.reason = "Invalid or empty orderbook";
@@ -230,7 +234,19 @@ namespace kalshi_mm {
                 return q;
             }
 
+            int current_pos = get_position(ob.ticker);
             int skew = calculate_skew(ob.ticker);
+
+            // One-sided quoting risk mitigation:
+            // When already at or above max long position limit, STOP quoting bids! Only quote asks to offload.
+            if (current_pos >= config_.max_position) {
+                q.quote_bid = false;
+            }
+            // When already at or below max short position limit, STOP quoting asks! Only quote bids to cover.
+            if (current_pos <= -config_.max_position) {
+                q.quote_ask = false;
+            }
+
             int my_bid = 0;
             int my_ask = 0;
 
@@ -246,7 +262,7 @@ namespace kalshi_mm {
             my_bid = std::clamp(my_bid, config_.min_bid, MAX_TICK_PRICE - 1);
             my_ask = std::clamp(my_ask, config_.min_bid + 1, config_.max_ask);
 
-            if (my_bid >= my_ask) {
+            if (q.quote_bid && q.quote_ask && my_bid >= my_ask) {
                 q.reason = "Calculated crossed or inverted quote";
                 return q;
             }
@@ -272,24 +288,39 @@ namespace kalshi_mm {
             return available_capital_cents_;
         }
 
-        // Collateral needed for a 2-sided quote: buying YES at bid_price costs bid_price;
-        // selling YES at ask_price (or buying NO) requires (100 - ask_price) collateral
-        static int calculate_collateral(int bid_price, int ask_price, int count = 1) {
-            return (bid_price + (CONTRACT_PAYOUT - ask_price)) * count;
+        // Collateral needed for quote: buying YES at bid_price costs bid_price;
+        // selling YES at ask_price requires (100 - ask_price) collateral
+        static int calculate_collateral(int bid_price, int ask_price, int count = 1, bool has_bid = true, bool has_ask = true) {
+            int coll = 0;
+            if (has_bid) coll += (bid_price * count);
+            if (has_ask) coll += ((CONTRACT_PAYOUT - ask_price) * count);
+            return coll;
         }
 
-        bool can_afford_quote(int bid_price, int ask_price, int count = 1) const {
-            int needed = calculate_collateral(bid_price, ask_price, count);
+        static int calculate_quote_collateral(const Quote& q) {
+            return calculate_collateral(q.bid_price, q.ask_price, q.quantity, q.quote_bid, q.quote_ask);
+        }
+
+        bool can_afford_quote(int bid_price, int ask_price, int count = 1, bool has_bid = true, bool has_ask = true) const {
+            int needed = calculate_collateral(bid_price, ask_price, count, has_bid, has_ask);
             return available_capital_cents_ >= needed;
         }
 
-        bool reserve_for_quote(int bid_price, int ask_price, int count = 1) {
-            int needed = calculate_collateral(bid_price, ask_price, count);
+        bool can_afford_quote(const Quote& q) const {
+            return can_afford_quote(q.bid_price, q.ask_price, q.quantity, q.quote_bid, q.quote_ask);
+        }
+
+        bool reserve_for_quote(int bid_price, int ask_price, int count = 1, bool has_bid = true, bool has_ask = true) {
+            int needed = calculate_collateral(bid_price, ask_price, count, has_bid, has_ask);
             if (available_capital_cents_ < needed) {
                 return false;
             }
             available_capital_cents_ -= needed;
             return true;
+        }
+
+        bool reserve_for_quote(const Quote& q) {
+            return reserve_for_quote(q.bid_price, q.ask_price, q.quantity, q.quote_bid, q.quote_ask);
         }
 
         void refund_bid(int bid_price, int count = 1) {

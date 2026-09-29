@@ -56,22 +56,30 @@ std::string KalshiClient::sign(const std::string& method, const std::string& pat
     if (!mdctx) throw std::runtime_error("Failed to create MD CTX");
     
     EVP_PKEY* pkey = static_cast<EVP_PKEY*>(pkey_.get());
+    int key_type = EVP_PKEY_base_id(pkey);
     
-    // Kalshi uses RSA SHA256 or ECDSA SHA256. Assuming standard SHA256 signing.
     EVP_PKEY_CTX* pctx = nullptr;
-    if (EVP_DigestSignInit(mdctx, &pctx, EVP_sha256(), nullptr, pkey) <= 0) {
-        EVP_MD_CTX_free(mdctx);
-        throw std::runtime_error("EVP_DigestSignInit failed");
-    }
-    
-    if (EVP_PKEY_base_id(pkey) == EVP_PKEY_RSA) {
-        if (EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) <= 0) {
+    if (key_type == EVP_PKEY_ED25519) {
+        // Ed25519 requires nullptr for digest type in OpenSSL
+        if (EVP_DigestSignInit(mdctx, nullptr, nullptr, nullptr, pkey) <= 0) {
             EVP_MD_CTX_free(mdctx);
-            throw std::runtime_error("Failed to set PSS padding");
+            throw std::runtime_error("EVP_DigestSignInit failed for Ed25519 key");
         }
-        if (EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, RSA_PSS_SALTLEN_MAX) <= 0) {
+    } else {
+        if (EVP_DigestSignInit(mdctx, &pctx, EVP_sha256(), nullptr, pkey) <= 0) {
             EVP_MD_CTX_free(mdctx);
-            throw std::runtime_error("Failed to set PSS saltlen");
+            throw std::runtime_error("EVP_DigestSignInit failed");
+        }
+        
+        if (key_type == EVP_PKEY_RSA) {
+            if (EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) <= 0) {
+                EVP_MD_CTX_free(mdctx);
+                throw std::runtime_error("Failed to set PSS padding");
+            }
+            if (EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, RSA_PSS_SALTLEN_MAX) <= 0) {
+                EVP_MD_CTX_free(mdctx);
+                throw std::runtime_error("Failed to set PSS saltlen");
+            }
         }
     }
     
@@ -80,7 +88,7 @@ std::string KalshiClient::sign(const std::string& method, const std::string& pat
         throw std::runtime_error("EVP_DigestSignUpdate failed");
     }
     
-    size_t siglen;
+    size_t siglen = 0;
     if (EVP_DigestSignFinal(mdctx, nullptr, &siglen) <= 0) {
         EVP_MD_CTX_free(mdctx);
         throw std::runtime_error("EVP_DigestSignFinal failed (length)");
@@ -100,7 +108,7 @@ std::string KalshiClient::sign(const std::string& method, const std::string& pat
     bio = BIO_push(bio, bmem);
     BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL); // No newlines
     
-    BIO_write(bio, signature.data(), siglen);
+    BIO_write(bio, signature.data(), static_cast<int>(siglen));
     BIO_flush(bio);
     
     BUF_MEM* bptr;
@@ -164,16 +172,16 @@ json KalshiClient::placeOrder(const std::string& ticker, const std::string& acti
         {"client_order_id", client_order_id},
         {"action", action},
         {"side", side},
-        {"count", std::to_string(count)},
+        {"count", count},
         {"yes_price", price},
         {"type", "limit"},
         {"time_in_force", "good_till_canceled"},
         {"self_trade_prevention_type", "maker"},
         {"post_only", true}
     };
-    return post("/portfolio/events/orders", payload);
+    return post("/portfolio/orders", payload);
 }
 
 json KalshiClient::cancelOrder(const std::string& order_id) {
-    return del("/portfolio/events/orders/" + order_id);
+    return del("/portfolio/orders/" + order_id);
 }
