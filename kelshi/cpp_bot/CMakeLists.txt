@@ -42,3 +42,16 @@ target_link_libraries(kalshi_bot PRIVATE
 if (WIN32)
     target_link_libraries(kalshi_bot PRIVATE ws2_32)
 endif()
+
+# Test Executable (Standalone zero-external-dependency suite for testing edge cases & black swans)
+add_executable(kalshi_tests
+    tests/test_orderbook_edge_cases.cpp
+    tests/test_volatility_circuit_breaker.cpp
+    tests/test_inventory_skew_and_risk.cpp
+    tests/test_collateral_and_solvency.cpp
+    tests/test_arbitrage_and_mispricing.cpp
+    tests/test_black_swan_scenarios.cpp
+    tests/run_all_tests.cpp
+)
+target_include_directories(kalshi_tests PRIVATE include tests)
+
