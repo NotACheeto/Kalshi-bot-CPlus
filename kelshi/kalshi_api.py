@@ -112,23 +112,20 @@ class KalshiClient:
             return {"order": {"order_id": order_id}}
 
         # Real execution logic below
-        v2_side = "bid" if action == "buy" else "ask"
-        if side == "no":
-            v2_side = "bid" if action == "sell" else "ask"
-            price = 100 - price
-
         payload = {
             "ticker": ticker,
             "client_order_id": f"bot_{int(time.time()*1000)}",
-            "side": v2_side,
-            "count": str(count) + ".00",
-            "price": f"0.{price:02d}00",
+            "action": action,
+            "side": side,
+            "count": count,
+            "yes_price": price,
+            "type": "limit",
             "time_in_force": "good_till_canceled",
             "self_trade_prevention_type": "maker",
-            "post_only": False
+            "post_only": True
         }
         logger.info(f"LIVE ORDER PLACED: {action} {count} {side} at {price}c for {ticker}")
-        return self.request("POST", "/portfolio/events/orders", data=payload)
+        return self.request("POST", "/portfolio/orders", data=payload)
 
     def get_orders(self, ticker=None, status="resting"):
         if self.is_paper:
@@ -148,7 +145,7 @@ class KalshiClient:
                 del self.paper_orders[order_id]
             return {"order_id": order_id}
 
-        return self.request("DELETE", f"/portfolio/events/orders/{order_id}")
+        return self.request("DELETE", f"/portfolio/orders/{order_id}")
 
     def simulate_fills(self, ticker, best_yes_bid, best_yes_ask):
         """ Local matching engine to simulate order execution on live data """
